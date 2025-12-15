@@ -33,6 +33,7 @@ input[type="number"]{background:#020617;color:#fff;width:100%}
 .log div{border-bottom:1px solid #222;padding:4px 0}
 .kv{display:flex;justify-content:space-between;font-size:14px}
 .small{font-size:12px;opacity:.7}
+canvas{background:#020617;border-radius:12px}
 </style>
 </head>
 <body>
@@ -44,6 +45,8 @@ input[type="number"]{background:#020617;color:#fff;width:100%}
 <div class="diff" id="diff"></div>
 <div class="event" id="event"></div>
 
+<canvas id="chart" width="860" height="260"></canvas>
+
 <div class="trade">
   <button class="toggle" onclick="toggleRandom()">自動変動 ON/OFF</button>
   <button class="yarakashi" onclick="yarakashi()">💥 やらかす</button>
@@ -51,7 +54,6 @@ input[type="number"]{background:#020617;color:#fff;width:100%}
 </div>
 
 <div class="grid">
-<!-- ポートフォリオ -->
 <div class="card">
 <h2>💼 ポートフォリオ</h2>
 <div class="kv"><span>現金</span><strong id="cash"></strong></div>
@@ -60,10 +62,9 @@ input[type="number"]{background:#020617;color:#fff;width:100%}
 <div class="kv"><span>評価損益</span><strong id="unreal"></strong></div>
 <div class="kv"><span>実現損益</span><strong id="realized"></strong></div>
 
-<!-- 売買モード -->
 <div class="mode">
-  <label><input type="radio" name="mode" value="single" checked> 1株ずつ</label>
-  <label><input type="radio" name="mode" value="bulk"> まとめ買い</label>
+  <label><input type="radio" name="mode" value="single" checked> 1株</label>
+  <label><input type="radio" name="mode" value="bulk"> まとめ</label>
 </div>
 
 <input id="qty" type="number" min="1" value="10" disabled>
@@ -73,22 +74,19 @@ input[type="number"]{background:#020617;color:#fff;width:100%}
   <button class="sell" onclick="sell()">売る</button>
 </div>
 
-<div class="small">※ 手数料：¥500 / 約定</div>
+<div class="small">※ 手数料 ¥500 / 約定</div>
 </div>
 
-<!-- 約定履歴 -->
 <div class="card">
 <h2>📑 約定履歴</h2>
 <div class="log" id="history"></div>
 </div>
 
-<!-- IR -->
 <div class="card">
 <h2>📢 言い訳(IR)</h2>
 <div class="log" id="ir"></div>
 </div>
 
-<!-- 投資家 -->
 <div class="card">
 <h2>💬 投資家コメント</h2>
 <div class="log" id="comments"></div>
@@ -98,55 +96,75 @@ input[type="number"]{background:#020617;color:#fff;width:100%}
 
 <script>
 const FEE=500;
+
+/* ===== 状態 ===== */
 let price=Number(localStorage.star_price)||4000;
-let prev=price,randomOn=true;
+let prev=Number(localStorage.star_prev)||price;
+let randomOn=true;
+
 let cash=Number(localStorage.star_cash)||1000000;
 let shares=Number(localStorage.star_shares)||0;
 let avg=Number(localStorage.star_avg)||0;
 let realized=Number(localStorage.star_realized)||0;
 let history=JSON.parse(localStorage.star_history||"[]");
+let priceHistory=JSON.parse(localStorage.star_chart||"[]");
+
+/* ===== DOM ===== */
+const diffEl=document.getElementById("diff");
+const eventEl=document.getElementById("event");
+const historyEl=document.getElementById("history");
+const irEl=document.getElementById("ir");
+const commentsEl=document.getElementById("comments");
+const qtyInput=document.getElementById("qty");
+const chart=document.getElementById("chart");
+const ctx=chart.getContext("2d");
+
+document.querySelectorAll('input[name="mode"]').forEach(r=>{
+  r.onchange=()=>qtyInput.disabled=r.value==="single";
+});
 
 const excuses=["精査中です","影響は軽微","想定内です","一時的です"];
 const comments=["助けて","握力","また社長","説明しろ"];
 
-const qtyInput=document.getElementById("qty");
+const yen=n=>"¥"+Math.round(n).toLocaleString();
 
-document.querySelectorAll('input[name="mode"]').forEach(r=>{
-  r.addEventListener("change",()=>{
-    qtyInput.disabled = r.value==="single" && r.checked;
-  });
-});
-
-function yen(n){return "¥"+Math.round(n).toLocaleString();}
-function update(){
- document.getElementById("price").textContent=yen(price);
- const d=price-prev,p=((d/prev)*100).toFixed(2);
- const diff=document.getElementById("diff");
- diff.textContent=`${d>=0?"+":""}${d} (${p}%)`;
- diff.className=d>=0?"up":"down";
-
- document.getElementById("cash").textContent=yen(cash);
- document.getElementById("shares").textContent=shares+"株";
- document.getElementById("avg").textContent=yen(avg||0);
- document.getElementById("unreal").textContent=yen(shares*price-shares*avg);
- document.getElementById("realized").textContent=yen(realized);
- renderHistory();
- save();
-}
-
+/* ===== 保存 ===== */
 function save(){
  localStorage.star_price=price;
+ localStorage.star_prev=prev;
  localStorage.star_cash=cash;
  localStorage.star_shares=shares;
  localStorage.star_avg=avg;
  localStorage.star_realized=realized;
  localStorage.star_history=JSON.stringify(history);
+ localStorage.star_chart=JSON.stringify(priceHistory);
 }
 
-function getQty(){
- const mode=document.querySelector('input[name="mode"]:checked').value;
- return mode==="single"?1:Number(qtyInput.value)||1;
+/* ===== 更新 ===== */
+function update(){
+ document.getElementById("price").textContent=yen(price);
+ const d=price-prev;
+ const p=prev?((d/prev)*100).toFixed(2):"0.00";
+ diffEl.textContent=`${d>=0?"+":""}${d} (${p}%)`;
+ diffEl.className="diff "+(d>=0?"up":"down");
+
+ document.getElementById("cash").textContent=yen(cash);
+ document.getElementById("shares").textContent=shares+"株";
+ document.getElementById("avg").textContent=yen(avg);
+ document.getElementById("unreal").textContent=yen(shares*(price-avg));
+ document.getElementById("realized").textContent=yen(realized);
+
+ historyEl.innerHTML=history.map(h=>`<div>${h}</div>`).join("");
+
+ priceHistory.push(price);
+ priceHistory=priceHistory.slice(-120);
+
+ save();
+ drawChart();
 }
+
+/* ===== 売買 ===== */
+const getQty=()=>document.querySelector('input[name="mode"]:checked').value==="single"?1:Number(qtyInput.value)||1;
 
 function buy(){
  const q=getQty();
@@ -163,7 +181,7 @@ function sell(){
  if(shares<q)return show("株不足","down");
  shares-=q; cash+=price*q-FEE;
  realized+=(price-avg)*q-FEE;
- if(shares===0)avg=0;
+ if(!shares)avg=0;
  log(`売 ${q}株 @${yen(price)}`);
  update();
 }
@@ -173,35 +191,53 @@ function log(t){
  history=history.slice(0,80);
 }
 
-function renderHistory(){
- historyEl.innerHTML="";
- history.forEach(h=>{
-  const d=document.createElement("div");
-  d.textContent=h; historyEl.appendChild(d);
+/* ===== チャート ===== */
+function drawChart(){
+ ctx.clearRect(0,0,chart.width,chart.height);
+ if(priceHistory.length<2)return;
+
+ const max=Math.max(...priceHistory);
+ const min=Math.min(...priceHistory);
+ const pad=20;
+
+ ctx.beginPath();
+ priceHistory.forEach((p,i)=>{
+   const x=pad+i*(chart.width-2*pad)/(priceHistory.length-1);
+   const y=chart.height-pad-(p-min)/(max-min||1)*(chart.height-2*pad);
+   i?ctx.lineTo(x,y):ctx.moveTo(x,y);
  });
+ ctx.strokeStyle="#4cff4c";
+ ctx.lineWidth=2;
+ ctx.stroke();
 }
 
+/* ===== その他 ===== */
 function show(t,c){
- event.textContent=t; event.className=c;
- setTimeout(()=>event.textContent="",2000);
+ eventEl.textContent=t;
+ eventEl.className="event "+c;
+ setTimeout(()=>eventEl.textContent="",1500);
 }
 
 function randomMove(){
  if(!randomOn)return;
  prev=price;
  const r=Math.random();
- if(r<0.03){price*=0.6;irLog();comLog();}
- else if(r<0.06){price*=1.4;comLog();}
+ if(r<0.03){price=Math.floor(price*0.6);ir();com();}
+ else if(r<0.06){price=Math.floor(price*1.4);com();}
  else price+=Math.random()*40-20;
  price=Math.max(1,Math.floor(price));
  update();
 }
 
 function toggleRandom(){randomOn=!randomOn;show("切替","up");}
-function yarakashi(){prev=price;price*=0.4;irLog();comLog();update();}
-function irLog(){ir.innerHTML="<div>"+excuses[Math.floor(Math.random()*excuses.length)]+"</div>"+ir.innerHTML;}
-function comLog(){commentsEl.innerHTML="<div>"+comments[Math.floor(Math.random()*comments.length)]+"</div>"+commentsEl.innerHTML;}
-function clearSave(){localStorage.clear();location.reload();}
+function yarakashi(){prev=price;price=Math.floor(price*0.4);ir();com();update();}
+const ir=()=>irEl.innerHTML=`<div>${excuses[Math.random()*excuses.length|0]}</div>`+irEl.innerHTML;
+const com=()=>commentsEl.innerHTML=`<div>${comments[Math.random()*comments.length|0]}</div>`+commentsEl.innerHTML;
+
+function clearSave(){
+ Object.keys(localStorage).filter(k=>k.startsWith("star_")).forEach(k=>localStorage.removeItem(k));
+ location.reload();
+}
 
 setInterval(randomMove,1500);
 update();
