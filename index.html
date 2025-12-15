@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>スターコーポレーション 株価</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body{margin:0;font-family:"Segoe UI",sans-serif;background:#0b1220;color:#fff}
+.container{max-width:900px;margin:24px auto;background:#111a2e;border-radius:16px;padding:24px}
+h1{text-align:center}
+.price{font-size:48px;text-align:center;font-weight:bold}
+.diff{text-align:center}
+.up{color:#4cff4c}.down{color:#ff5c5c}
+.event{text-align:center;font-weight:bold;min-height:24px}
+
+button,input{padding:10px;border-radius:8px;border:none;font-size:15px}
+button{cursor:pointer}
+.buy{background:#16a34a;color:#fff}
+.sell{background:#2563eb;color:#fff}
+.toggle{background:#444;color:#fff}
+.yarakashi{background:#b91c1c;color:#fff}
+.clear{background:#374151;color:#fff}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.card{background:#0b1220;border-radius:12px;padding:12px}
+.card h2{font-size:15px;margin:0 0 6px}
+
+.trade{display:flex;gap:6px;margin-top:6px}
+input[type="number"]{background:#020617;color:#fff;width:100%}
+
+.mode{display:flex;gap:10px;font-size:13px;margin-top:6px}
+.log{max-height:150px;overflow:auto;font-size:13px}
+.log div{border-bottom:1px solid #222;padding:4px 0}
+.kv{display:flex;justify-content:space-between;font-size:14px}
+.small{font-size:12px;opacity:.7}
+</style>
+</head>
+<body>
+
+<div class="container">
+<h1>スターコーポレーション</h1>
+
+<div class="price" id="price"></div>
+<div class="diff" id="diff"></div>
+<div class="event" id="event"></div>
+
+<div class="trade">
+  <button class="toggle" onclick="toggleRandom()">自動変動 ON/OFF</button>
+  <button class="yarakashi" onclick="yarakashi()">💥 やらかす</button>
+  <button class="clear" onclick="clearSave()">保存削除</button>
+</div>
+
+<div class="grid">
+<!-- ポートフォリオ -->
+<div class="card">
+<h2>💼 ポートフォリオ</h2>
+<div class="kv"><span>現金</span><strong id="cash"></strong></div>
+<div class="kv"><span>保有株</span><strong id="shares"></strong></div>
+<div class="kv"><span>平均取得</span><strong id="avg"></strong></div>
+<div class="kv"><span>評価損益</span><strong id="unreal"></strong></div>
+<div class="kv"><span>実現損益</span><strong id="realized"></strong></div>
+
+<!-- 売買モード -->
+<div class="mode">
+  <label><input type="radio" name="mode" value="single" checked> 1株ずつ</label>
+  <label><input type="radio" name="mode" value="bulk"> まとめ買い</label>
+</div>
+
+<input id="qty" type="number" min="1" value="10" disabled>
+
+<div class="trade">
+  <button class="buy" onclick="buy()">買う</button>
+  <button class="sell" onclick="sell()">売る</button>
+</div>
+
+<div class="small">※ 手数料：¥500 / 約定</div>
+</div>
+
+<!-- 約定履歴 -->
+<div class="card">
+<h2>📑 約定履歴</h2>
+<div class="log" id="history"></div>
+</div>
+
+<!-- IR -->
+<div class="card">
+<h2>📢 言い訳(IR)</h2>
+<div class="log" id="ir"></div>
+</div>
+
+<!-- 投資家 -->
+<div class="card">
+<h2>💬 投資家コメント</h2>
+<div class="log" id="comments"></div>
+</div>
+</div>
+</div>
+
+<script>
+const FEE=500;
+let price=Number(localStorage.star_price)||4000;
+let prev=price,randomOn=true;
+let cash=Number(localStorage.star_cash)||1000000;
+let shares=Number(localStorage.star_shares)||0;
+let avg=Number(localStorage.star_avg)||0;
+let realized=Number(localStorage.star_realized)||0;
+let history=JSON.parse(localStorage.star_history||"[]");
+
+const excuses=["精査中です","影響は軽微","想定内です","一時的です"];
+const comments=["助けて","握力","また社長","説明しろ"];
+
+const qtyInput=document.getElementById("qty");
+
+document.querySelectorAll('input[name="mode"]').forEach(r=>{
+  r.addEventListener("change",()=>{
+    qtyInput.disabled = r.value==="single" && r.checked;
+  });
+});
+
+function yen(n){return "¥"+Math.round(n).toLocaleString();}
+function update(){
+ document.getElementById("price").textContent=yen(price);
+ const d=price-prev,p=((d/prev)*100).toFixed(2);
+ const diff=document.getElementById("diff");
+ diff.textContent=`${d>=0?"+":""}${d} (${p}%)`;
+ diff.className=d>=0?"up":"down";
+
+ document.getElementById("cash").textContent=yen(cash);
+ document.getElementById("shares").textContent=shares+"株";
+ document.getElementById("avg").textContent=yen(avg||0);
+ document.getElementById("unreal").textContent=yen(shares*price-shares*avg);
+ document.getElementById("realized").textContent=yen(realized);
+ renderHistory();
+ save();
+}
+
+function save(){
+ localStorage.star_price=price;
+ localStorage.star_cash=cash;
+ localStorage.star_shares=shares;
+ localStorage.star_avg=avg;
+ localStorage.star_realized=realized;
+ localStorage.star_history=JSON.stringify(history);
+}
+
+function getQty(){
+ const mode=document.querySelector('input[name="mode"]:checked').value;
+ return mode==="single"?1:Number(qtyInput.value)||1;
+}
+
+function buy(){
+ const q=getQty();
+ const cost=price*q+FEE;
+ if(cash<cost)return show("資金不足","down");
+ avg=(avg*shares+price*q)/(shares+q);
+ shares+=q; cash-=cost;
+ log(`買 ${q}株 @${yen(price)}`);
+ update();
+}
+
+function sell(){
+ const q=getQty();
+ if(shares<q)return show("株不足","down");
+ shares-=q; cash+=price*q-FEE;
+ realized+=(price-avg)*q-FEE;
+ if(shares===0)avg=0;
+ log(`売 ${q}株 @${yen(price)}`);
+ update();
+}
+
+function log(t){
+ history.unshift(`[${new Date().toLocaleTimeString()}] ${t} 手数料¥500`);
+ history=history.slice(0,80);
+}
+
+function renderHistory(){
+ historyEl.innerHTML="";
+ history.forEach(h=>{
+  const d=document.createElement("div");
+  d.textContent=h; historyEl.appendChild(d);
+ });
+}
+
+function show(t,c){
+ event.textContent=t; event.className=c;
+ setTimeout(()=>event.textContent="",2000);
+}
+
+function randomMove(){
+ if(!randomOn)return;
+ prev=price;
+ const r=Math.random();
+ if(r<0.03){price*=0.6;irLog();comLog();}
+ else if(r<0.06){price*=1.4;comLog();}
+ else price+=Math.random()*40-20;
+ price=Math.max(1,Math.floor(price));
+ update();
+}
+
+function toggleRandom(){randomOn=!randomOn;show("切替","up");}
+function yarakashi(){prev=price;price*=0.4;irLog();comLog();update();}
+function irLog(){ir.innerHTML="<div>"+excuses[Math.floor(Math.random()*excuses.length)]+"</div>"+ir.innerHTML;}
+function comLog(){commentsEl.innerHTML="<div>"+comments[Math.floor(Math.random()*comments.length)]+"</div>"+commentsEl.innerHTML;}
+function clearSave(){localStorage.clear();location.reload();}
+
+setInterval(randomMove,1500);
+update();
+</script>
+</body>
+</html>
